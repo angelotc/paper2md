@@ -1,6 +1,6 @@
 {
   "chunk_prompt": "You are summarizing an ML/RecSys research paper for an engineering codebase context.\nWrite a concise, high-signal summary of THIS CHUNK.\nFocus on: problem, key methods, key claims/results, assumptions/limitations.\nReturn 6-10 bullet points.\n\nPaper title: {title}\nChunk {idx}/{total}:\n\n{chunk}",
-  "reduce_prompt": "Combine the chunk summaries into a final paper summary for engineers.\nOutput markdown with EXACTLY these sections:\n### TL; DR (3 bullets)\n### Problem\n### Approach\n### Results (include numbers)\n### Practical takeaways for DealSeek (deals/product recommendations)\n### Limitations / open questions\nRules:\n- Prefer concrete metrics/numbers if stated.\n- If something isn't supported, write 'Unclear from text'.\n\nPaper title: {title}\n\nChunk summaries:\n\n{summaries}",
+  "reduce_prompt": "Combine the chunk summaries into a final paper summary for engineers.\nOutput markdown with EXACTLY these sections:\n### TL; DR (3 bullets)\n### Problem\n### Approach\n### Results (include numbers)\n### Limitations / open questions\nRules:\n- Prefer concrete metrics/numbers if stated.\n- If something isn't supported, write 'Unclear from text'.\n\nPaper title: {title}\n\nChunk summaries:\n\n{summaries}",
   "chunk_max_chars": 12000,
   "max_chunks": 8
 }
