@@ -7,7 +7,7 @@ Behavior:
 - Generates structured summaries using OpenAI-compatible LLM (required).
 
 Usage (PowerShell):
-  python summarize_papers.py [--papers-dir papers] [--out papers/PAPERS_SUMMARY.md]
+  python summarize_papers.py [--papers-dir papers] [--out output/PAPERS_SUMMARY.md]
 
 Required env vars:
   OPENAI_API_KEY          -> API key for LLM provider
@@ -22,7 +22,9 @@ Optional env vars:
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -38,14 +40,47 @@ from lib.content_analysis import extract_structured_content
 load_dotenv(Path(__file__).parent / ".env")
 
 
+def _truthy_env(name: str) -> bool:
+    v = os.environ.get(name, "").strip().lower()
+    return v not in {"", "0", "false", "no", "off"}
+
+
+def _format_exc(e: Exception) -> str:
+    msg = str(e).strip()
+    if msg:
+        return f"{type(e).__name__}: {msg}"
+    return type(e).__name__
+
+
+def _report_error(stage: str, pdf: Path, e: Exception) -> None:
+    tqdm.write(f"[ERROR] {stage} failed for {pdf.name}: {_format_exc(e)}")
+    if _truthy_env("PAPER2MD_DEBUG_TRACE"):
+        tqdm.write(traceback.format_exc())
+
+
 def load_papers(papers_dir: Path, max_pages: int | None = None) -> list[Paper]:
     """Extract title + text from all PDFs in directory."""
     pdfs = sorted(papers_dir.glob("*.pdf"))
     papers: list[Paper] = []
+    failures = 0
 
     for pdf in tqdm(pdfs, desc="Extracting PDFs"):
-        paper = extract_paper_from_pdf(pdf, max_pages=max_pages)
+        try:
+            paper = extract_paper_from_pdf(pdf, max_pages=max_pages)
+        except Exception as e:
+            failures += 1
+            _report_error("extract", pdf, e)
+            continue
+
+        if len(paper.text) < 500:
+            tqdm.write(
+                f"[WARN] Very little text extracted for {pdf.name} "
+                f"(chars={len(paper.text)}). It may be scanned or protected."
+            )
         papers.append(paper)
+
+    if failures:
+        tqdm.write(f"[WARN] Extraction failures: {failures}/{len(pdfs)} PDFs")
 
     return papers
 
@@ -53,9 +88,18 @@ def load_papers(papers_dir: Path, max_pages: int | None = None) -> list[Paper]:
 def generate_summaries(papers: list[Paper]) -> list[Paper]:
     """Generate summaries for all papers (LLM or heuristic)."""
     summarized: list[Paper] = []
+    failures = 0
 
     for paper in tqdm(papers, desc="Summarizing"):
-        summarized.append(summarize_paper(paper))
+        try:
+            summarized.append(summarize_paper(paper))
+        except Exception as e:
+            failures += 1
+            _report_error("summarize", paper.pdf_path, e)
+            summarized.append(paper)
+
+    if failures:
+        tqdm.write(f"[WARN] Summarization failures: {failures}/{len(papers)} PDFs")
 
     return summarized
 
@@ -117,8 +161,8 @@ def main() -> int:
     ap.add_argument("--papers-dir", default="papers", help="Directory containing PDFs (default: papers)")
     ap.add_argument(
         "--out",
-        default="papers/PAPERS_SUMMARY.md",
-        help="Output markdown path (default: papers/PAPERS_SUMMARY.md)",
+        default="output/PAPERS_SUMMARY.md",
+        help="Output markdown path (default: output/PAPERS_SUMMARY.md)",
     )
     ap.add_argument("--max-pages", type=int, default=0, help="Limit pages per PDF (0 = all pages)")
     args = ap.parse_args()

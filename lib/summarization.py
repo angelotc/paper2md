@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
-from typing import Final
+from pathlib import Path
+from typing import Final, Any
 
 from tqdm import tqdm
 
@@ -14,6 +16,31 @@ from lib.content_analysis import chunk_text_for_llm
 
 DEFAULT_MAX_CHARS_PER_CHUNK: Final[int] = 12000
 DEFAULT_MAX_CHUNKS: Final[int] = 8
+
+DEFAULT_CHUNK_PROMPT: Final[str] = (
+    "You are summarizing an ML/RecSys research paper for an engineering codebase context.\n"
+    "Write a concise, high-signal summary of THIS CHUNK.\n"
+    "Focus on: problem, key methods, key claims/results, assumptions/limitations.\n"
+    "Return 6-10 bullet points.\n\n"
+    "Paper title: {title}\n"
+    "Chunk {idx}/{total}:\n\n{chunk}"
+)
+
+DEFAULT_REDUCE_PROMPT: Final[str] = (
+    "Combine the chunk summaries into a final paper summary for engineers.\n"
+    "Output markdown with EXACTLY these sections:\n"
+    "### TL;DR (3 bullets)\n"
+    "### Problem\n"
+    "### Approach\n"
+    "### Results (include numbers)\n"
+    "### Practical takeaways for DealSeek (deals/product recommendations)\n"
+    "### Limitations / open questions\n"
+    "Rules:\n"
+    "- Prefer concrete metrics/numbers if stated.\n"
+    "- If something isn't supported, write 'Unclear from text'.\n\n"
+    "Paper title: {title}\n\n"
+    "Chunk summaries:\n\n{summaries}"
+)
 
 
 def _get_int_env(name: str, default: int) -> int:
@@ -33,15 +60,37 @@ def _get_int_env(name: str, default: int) -> int:
     return val
 
 
+_CONFIG_CACHE: dict[str, Any] | None = None
+
+
+def _load_config() -> dict[str, Any]:
+    """Load configuration from prompts.json if it exists (cached)."""
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is not None:
+        return _CONFIG_CACHE
+
+    path = Path("prompts.json")
+    if not path.exists():
+        _CONFIG_CACHE = {}
+        return _CONFIG_CACHE
+    try:
+        _CONFIG_CACHE = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        _CONFIG_CACHE = {}
+    
+    return _CONFIG_CACHE
+
+
 def _summarize_chunk(client, model: str, paper: Paper, chunk: str, idx: int, total: int) -> str:
     """Summarize a single chunk of paper text using OpenAI."""
+    config = _load_config()
+    prompt_template = config.get("chunk_prompt", DEFAULT_CHUNK_PROMPT)
     prompt = (
-        "You are summarizing an ML/RecSys research paper for an engineering codebase context.\n"
-        "Write a concise, high-signal summary of THIS CHUNK.\n"
-        "Focus on: problem, key methods, key claims/results, assumptions/limitations.\n"
-        "Return 6-10 bullet points.\n\n"
-        f"Paper title: {paper.title}\n"
-        f"Chunk {idx}/{total}:\n\n{chunk}"
+        prompt_template
+        .replace("{title}", paper.title)
+        .replace("{idx}", str(idx))
+        .replace("{total}", str(total))
+        .replace("{chunk}", chunk)
     )
     resp = client.chat.completions.create(
         model=model,
@@ -52,20 +101,12 @@ def _summarize_chunk(client, model: str, paper: Paper, chunk: str, idx: int, tot
 
 def _reduce_chunk_summaries(client, model: str, paper: Paper, chunk_summaries: list[str]) -> str:
     """Combine chunk summaries into final paper summary using OpenAI."""
+    config = _load_config()
+    reduce_prompt_template = config.get("reduce_prompt", DEFAULT_REDUCE_PROMPT)
     reduce_prompt = (
-        "Combine the chunk summaries into a final paper summary for engineers.\n"
-        "Output markdown with EXACTLY these sections:\n"
-        "### TL;DR (3 bullets)\n"
-        "### Problem\n"
-        "### Approach\n"
-        "### Results (include numbers)\n"
-        "### Practical takeaways for DealSeek (deals/product recommendations)\n"
-        "### Limitations / open questions\n"
-        "Rules:\n"
-        "- Prefer concrete metrics/numbers if stated.\n"
-        "- If something isn't supported, write 'Unclear from text'.\n\n"
-        f"Paper title: {paper.title}\n\n"
-        "Chunk summaries:\n\n" + "\n\n".join(chunk_summaries)
+        reduce_prompt_template
+        .replace("{title}", paper.title)
+        .replace("{summaries}", "\n\n".join(chunk_summaries))
     )
     resp = client.chat.completions.create(
         model=model,
@@ -106,8 +147,15 @@ def summarize_paper(paper: Paper, max_chunks: int = 8) -> Paper:
     client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
     model = os.environ.get("OPENAI_MODEL", "gpt-5-mini-2025-08-07")
 
-    max_chars = _get_int_env("PAPER2MD_CHUNK_MAX_CHARS", DEFAULT_MAX_CHARS_PER_CHUNK)
-    env_max_chunks = _get_int_env("PAPER2MD_MAX_CHUNKS", DEFAULT_MAX_CHUNKS)
+    config = _load_config()
+
+    # Priority: Env > Config > Default
+    default_max_chars = config.get("chunk_max_chars", DEFAULT_MAX_CHARS_PER_CHUNK)
+    default_max_chunks = config.get("max_chunks", DEFAULT_MAX_CHUNKS)
+
+    max_chars = _get_int_env("PAPER2MD_CHUNK_MAX_CHARS", default_max_chars)
+    env_max_chunks = _get_int_env("PAPER2MD_MAX_CHUNKS", default_max_chunks)
+
     # Preserve function argument as an override when explicitly passed by callers.
     effective_max_chunks = max_chunks if max_chunks != DEFAULT_MAX_CHUNKS else env_max_chunks
 

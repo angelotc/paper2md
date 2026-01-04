@@ -1,6 +1,6 @@
 # paper2md
 
-Automatically generate structured markdown summaries of academic PDFs (ML/RecSys papers) for use as context in engineering codebases.
+Automatically generate structured markdown summaries of academic PDFs for use as context in engineering codebases.
 
 ## Features
 
@@ -40,14 +40,35 @@ python summarize_papers.py
 OPENAI_API_KEY=sk-... python summarize_papers.py
 
 # Custom options
-python summarize_papers.py --papers-dir papers --out papers/PAPERS_SUMMARY.md --max-pages 10
+python summarize_papers.py --papers-dir papers --out output/PAPERS_SUMMARY.md --max-pages 10
 ```
 
 ### Command-line options
 
 - `--papers-dir DIR` - Directory containing PDFs (default: `papers`)
-- `--out FILE` - Output markdown path (default: `papers/PAPERS_SUMMARY.md`)
+- `--out FILE` - Output markdown path (default: `output/PAPERS_SUMMARY.md`)
 - `--max-pages N` - Limit pages per PDF, 0 = all pages (default: 0)
+
+### Configuration (prompts.json)
+
+You can customize the summarization prompts and chunking logic by creating a `prompts.json` file in the root directory.
+
+```json
+{
+  "chunk_prompt": "Summarize this chunk: {chunk}",
+  "reduce_prompt": "Combine these summaries: {summaries}",
+  "chunk_max_chars": 12000,
+  "max_chunks": 8
+}
+```
+
+**Available Keys:**
+- `chunk_prompt`: Template for summarizing individual chunks. Placeholders: `{title}`, `{idx}`, `{total}`, `{chunk}`.
+- `reduce_prompt`: Template for the final combination step. Placeholders: `{title}`, `{summaries}`.
+- `chunk_max_chars`: Maximum characters per text chunk (default: `12000`).
+- `max_chunks`: Maximum number of chunks to process per paper (default: `8`).
+
+*Note: Environment variables take precedence over `prompts.json` values.*
 
 ### Environment variables
 
@@ -73,11 +94,8 @@ graph TD
     G --> I
     H --> I
 
-    I --> J{Extractor?}
-    J -->|Preferred| K[pdfminer.six<br/>two-column layout]
-    J -->|Fallback| L[pypdf]
-    K --> M[Paper Object<br/>path, title, text]
-    L --> M
+    I --> J[Extract Text<br/>pdfminer.six]
+    J --> M[Paper Object<br/>path, title, text]
 
     M --> N[LLM Summarization<br/>summarization.py]
     N --> O[Chunk Text<br/>max 12k chars]
@@ -88,7 +106,7 @@ graph TD
     R --> S{More PDFs?}
     S -->|Yes| C
     S -->|No| T[Build Markdown<br/>Index + Summaries]
-    T --> U[Write Output File<br/>PAPERS_SUMMARY.md]
+    T --> U[Write Output File<br/>output/PAPERS_SUMMARY.md]
 ```
 
 **Key stages:**
@@ -108,16 +126,6 @@ The codebase follows a **deep modules** design pattern with strict separation of
 - `summarize_papers.py` - Thin orchestration layer
 
 See [CLAUDE.md](CLAUDE.md) for detailed architecture documentation.
-
-## Design Principles
-
-This codebase strictly follows the principles in [PROGRAMMING.md](PROGRAMMING.md):
-
-- Deep modules with simple interfaces
-- Functions ≤60 lines
-- Immutable dataclasses (frozen=True)
-- Pure functions separated from I/O
-- Complexity pulled downward into library modules
 
 ## Adding PDFs with Missing Metadata
 
@@ -146,7 +154,6 @@ Generated markdown includes:
 
 ## Dependencies
 
-- `pypdf` - PDF text extraction (fallback)
 - `pdfminer.six` - PDF text extraction (preferred for two-column layouts)
 - `python-dotenv` - Environment variable loading
 - `tqdm` - Progress bars

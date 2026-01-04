@@ -183,34 +183,10 @@ def _extract_title_from_metadata(pdf_bytes: bytes) -> Optional[str]:
 
 
 def _extract_title_from_first_page(pdf_path: Path) -> Optional[str]:
-    """Extract title from first-page text using pypdf heuristics."""
+    """Extract title from first-page text using pdfminer.six."""
     try:
-        from pypdf import PdfReader  # type: ignore
-    except Exception:
-        return None
-
-    try:
-        reader = PdfReader(str(pdf_path))
-    except Exception:
-        return None
-
-    # Metadata title
-    try:
-        meta = reader.metadata
-        if meta:
-            t = getattr(meta, "title", None) or meta.get("/Title")  # type: ignore[attr-defined]
-            if t:
-                t = str(t).strip()
-                if t and t.lower() not in {"untitled", "title"}:
-                    return t
-    except Exception:
-        pass
-
-    # First-page text heuristic
-    try:
-        if not reader.pages:
-            return None
-        text = reader.pages[0].extract_text() or ""
+        from pdfminer.high_level import extract_text as extract_miner  # type: ignore
+        text = extract_miner(str(pdf_path), maxpages=1) or ""
     except Exception:
         return None
 
@@ -245,35 +221,13 @@ def _extract_title_from_first_page(pdf_path: Path) -> Optional[str]:
     return first
 
 
-def _extract_text_with_pdfminer(pdf_path: Path, max_pages: int | None) -> str:
+def extract_text(pdf_path: Path, max_pages: int | None = None) -> str:
     """Extract text using pdfminer.six (best for two-column layouts)."""
     try:
         from pdfminer.high_level import extract_text as extract_miner  # type: ignore
         # maxpages=0 means "all pages" in pdfminer
         txt = extract_miner(str(pdf_path), maxpages=max_pages or 0) or ""
         return txt.strip()
-    except Exception:
-        return ""
-
-
-def _extract_text_with_pypdf(pdf_path: Path, max_pages: int | None) -> str:
-    """Extract text using pypdf (fallback with layout mode)."""
-    try:
-        from pypdf import PdfReader
-        reader = PdfReader(str(pdf_path), strict=False)
-        pages = reader.pages
-        if max_pages is not None:
-            pages = pages[:max_pages]
-        parts: list[str] = []
-        for page in pages:
-            try:
-                # 'layout' mode is better for two-column academic PDFs
-                t = page.extract_text(extraction_mode="layout") or ""
-            except Exception:
-                t = page.extract_text() or ""
-            if t:
-                parts.append(t)
-        return "\n\n".join(parts).strip()
     except Exception:
         return ""
 
@@ -286,12 +240,11 @@ def extract_paper_from_pdf(pdf_path: Path, max_pages: int | None = None) -> Pape
     1. Manual override (TITLE_OVERRIDES)
     2. PDF Info dict /Title metadata
     3. XMP dc:title metadata
-    4. First-page text heuristics (pypdf)
+    4. First-page text heuristics (pdfminer.six)
     5. Fallback to filename
 
     Text extraction:
-    - pdfminer.six (preferred for two-column layouts)
-    - pypdf (fallback)
+    - pdfminer.six
 
     Returns: Paper with title + cleaned text
     """
@@ -313,10 +266,8 @@ def extract_paper_from_pdf(pdf_path: Path, max_pages: int | None = None) -> Pape
     if not title:
         title = pdf_path.stem.replace("_", " ").strip()
 
-    # Extract text: prefer pdfminer, fallback to pypdf
-    txt = _extract_text_with_pdfminer(pdf_path, max_pages)
-    if len(txt) < 500:
-        txt = _extract_text_with_pypdf(pdf_path, max_pages)
+    # Extract text
+    txt = extract_text(pdf_path, max_pages=max_pages)
 
     # Clean the text
     if txt:
