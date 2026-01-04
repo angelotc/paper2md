@@ -15,8 +15,6 @@ Required env vars:
 Optional env vars:
   OPENAI_MODEL            -> default: gpt-5-mini-2025-08-07
   OPENAI_BASE_URL         -> API base URL (e.g. OpenRouter, Gemini)
-  PAPER2MD_CHUNK_MAX_CHARS -> max characters per chunk for map step (default: 12000)
-  PAPER2MD_MAX_CHUNKS      -> max number of chunks per paper (default: 8)
 """
 
 from __future__ import annotations

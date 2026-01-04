@@ -43,23 +43,6 @@ DEFAULT_REDUCE_PROMPT: Final[str] = (
 )
 
 
-def _get_int_env(name: str, default: int) -> int:
-    """Read a positive integer from environment variables; fall back to default."""
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    raw = raw.strip()
-    if not raw:
-        return default
-    try:
-        val = int(raw)
-    except ValueError:
-        raise RuntimeError(f"{name} must be an integer (got {raw!r})")
-    if val <= 0:
-        raise RuntimeError(f"{name} must be > 0 (got {val})")
-    return val
-
-
 _CONFIG_CACHE: dict[str, Any] | None = None
 
 
@@ -149,15 +132,12 @@ def summarize_paper(paper: Paper, max_chunks: int = 8) -> Paper:
 
     config = _load_config()
 
-    # Priority: Env > Config > Default
-    default_max_chars = config.get("chunk_max_chars", DEFAULT_MAX_CHARS_PER_CHUNK)
-    default_max_chunks = config.get("max_chunks", DEFAULT_MAX_CHUNKS)
-
-    max_chars = _get_int_env("PAPER2MD_CHUNK_MAX_CHARS", default_max_chars)
-    env_max_chunks = _get_int_env("PAPER2MD_MAX_CHUNKS", default_max_chunks)
+    # Priority: Config > Default
+    max_chars = config.get("chunk_max_chars", DEFAULT_MAX_CHARS_PER_CHUNK)
+    config_max_chunks = config.get("max_chunks", DEFAULT_MAX_CHUNKS)
 
     # Preserve function argument as an override when explicitly passed by callers.
-    effective_max_chunks = max_chunks if max_chunks != DEFAULT_MAX_CHUNKS else env_max_chunks
+    effective_max_chunks = max_chunks if max_chunks != DEFAULT_MAX_CHUNKS else config_max_chunks
 
     chunks = chunk_text_for_llm(paper.text, max_chars=max_chars)[:effective_max_chunks]
     chunk_summaries: list[str] = []

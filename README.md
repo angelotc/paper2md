@@ -30,26 +30,15 @@ cp .env.local .env
 # Edit .env and add your OPENAI_API_KEY (required)
 ```
 
-## Usage
+## Configuration
 
-```bash
-# Basic usage (requires OPENAI_API_KEY in .env or environment)
-python summarize_papers.py
+### Environment variables
 
-# Or set API key inline
-OPENAI_API_KEY=sk-... python summarize_papers.py
+- `OPENAI_API_KEY` - **Required** for LLM summarization
+- `OPENAI_MODEL` - Model to use (default: `gpt-5-mini-2025-08-07`)
+- `OPENAI_BASE_URL` - API base URL (optional, for OpenRouter, Gemini, etc.)
 
-# Custom options
-python summarize_papers.py --papers-dir papers --out output/PAPERS_SUMMARY.md --max-pages 10
-```
-
-### Command-line options
-
-- `--papers-dir DIR` - Directory containing PDFs (default: `papers`)
-- `--out FILE` - Output markdown path (default: `output/PAPERS_SUMMARY.md`)
-- `--max-pages N` - Limit pages per PDF, 0 = all pages (default: 0)
-
-### Configuration (prompts.json)
+### prompts.json
 
 You can customize the summarization prompts and chunking logic by creating a `prompts.json` file in the root directory.
 
@@ -70,13 +59,24 @@ You can customize the summarization prompts and chunking logic by creating a `pr
 
 *Note: Environment variables take precedence over `prompts.json` values.*
 
-### Environment variables
+## Usage
 
-- `OPENAI_API_KEY` - **Required** for LLM summarization
-- `OPENAI_MODEL` - Model to use (default: `gpt-5-mini-2025-08-07`)
-- `OPENAI_BASE_URL` - API base URL (optional, for OpenRouter, Gemini, etc.)
-- `PAPER2MD_CHUNK_MAX_CHARS` - Max characters per chunk for summarization map step (default: `12000`)
-- `PAPER2MD_MAX_CHUNKS` - Max number of chunks per paper (default: `8`)
+```bash
+# Basic usage (requires OPENAI_API_KEY in .env or environment)
+python summarize_papers.py
+
+# Or set API key inline
+OPENAI_API_KEY=sk-... python summarize_papers.py
+
+# Custom options
+python summarize_papers.py --papers-dir papers --out output/PAPERS_SUMMARY.md --max-pages 10
+```
+
+### Command-line options
+
+- `--papers-dir DIR` - Directory containing PDFs (default: `papers`)
+- `--out FILE` - Output markdown path (default: `output/PAPERS_SUMMARY.md`)
+- `--max-pages N` - Limit pages per PDF, 0 = all pages (default: 0)
 
 ## Process Flow
 
