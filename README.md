@@ -85,28 +85,34 @@ graph TD
     A[📁 PDF Directory] --> B[Extract PDFs]
     B --> C[For each PDF]
 
-    C --> D[Title Extraction<br/>pdf_extract.py]
-    D --> E{Title Found?}
-    E -->|Metadata| F[PDF /Title or XMP]
-    E -->|Heuristic| G[First-page text analysis]
-    E -->|Fallback| H[Filename]
-    F --> I[Extract Text]
-    G --> I
-    H --> I
+    subgraph "1. Extraction"
+        C --> D{Title Strategy}
+        D -->|1. Override| E[Manual Dict]
+        D -->|2. Metadata| F[PDF /Title or XMP]
+        D -->|3. Heuristic| G[First Page Text]
+        D -->|4. Fallback| H[Filename]
+        
+        E --> I[Extract Full Text<br/>pdfminer.six]
+        F --> I
+        G --> I
+        H --> I
+        I --> J[Clean Text]
+    end
 
-    I --> J[Extract Text<br/>pdfminer.six]
-    J --> M[Paper Object<br/>path, title, text]
+    J --> K[Paper Object]
 
-    M --> N[LLM Summarization<br/>summarization.py]
-    N --> O[Chunk Text<br/>max 12k chars]
-    O --> P[Map: Summarize Each Chunk<br/>OpenAI API]
-    P --> Q[Reduce: Combine Summaries<br/>OpenAI API]
-    Q --> R[Paper with Summary<br/>TL;DR, Problem, Approach, etc.]
+    subgraph "2. Summarization"
+        K --> L[Load Config<br/>prompts.json]
+        L --> M[Chunk Text]
+        M --> N[Map: Summarize Chunks<br/>OpenAI API]
+        N --> O[Reduce: Combine<br/>OpenAI API]
+    end
 
-    R --> S{More PDFs?}
-    S -->|Yes| C
-    S -->|No| T[Build Markdown<br/>Index + Summaries]
-    T --> U[Write Output File<br/>output/PAPERS_SUMMARY.md]
+    O --> P[Final Summary]
+    P --> Q{More PDFs?}
+    Q -->|Yes| C
+    Q -->|No| R[Build Markdown]
+    R --> S[Write Output]
 ```
 
 **Key stages:**
