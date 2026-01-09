@@ -5,9 +5,11 @@ Summarize PDFs in /papers into a single markdown file for repo context.
 Behavior:
 - Extracts text + title from each PDF via sophisticated metadata + text extraction.
 - Generates structured summaries using OpenAI-compatible LLM (required).
+- Caches summaries in .paper2md/ to skip unchanged papers.
 
 Usage (PowerShell):
   python summarize_papers.py [--papers-dir papers] [--out output/PAPERS_SUMMARY.md]
+  python summarize_papers.py --no-cache  # Force re-summarize all papers
 
 Required env vars:
   OPENAI_API_KEY          -> API key for LLM provider
@@ -33,6 +35,7 @@ from lib.models import Paper
 from lib.pdf_extract import extract_paper_from_pdf
 from lib.summarization import summarize_paper
 from lib.content_analysis import extract_structured_content
+from lib.cache import PaperCache, compute_pdf_hash
 
 # Load environment variables from root .env if it exists
 load_dotenv(Path(__file__).parent / ".env")
@@ -56,15 +59,35 @@ def _report_error(stage: str, pdf: Path, e: Exception) -> None:
         tqdm.write(traceback.format_exc())
 
 
-def load_papers(papers_dir: Path, max_pages: int | None = None) -> list[Paper]:
-    """Extract title + text from all PDFs in directory."""
+def load_papers(
+    papers_dir: Path,
+    max_pages: int | None = None,
+    cache: PaperCache | None = None
+) -> tuple[list[Paper], dict[str, str]]:
+    """
+    Extract title + text from all PDFs in directory.
+    
+    Returns: (papers, pdf_hashes) where pdf_hashes maps filename to hash
+    """
     pdfs = sorted(papers_dir.glob("*.pdf"))
     papers: list[Paper] = []
+    pdf_hashes: dict[str, str] = {}
     failures = 0
+    cached_count = 0
 
     for pdf in tqdm(pdfs, desc="Extracting PDFs"):
+        # Check cache first
+        if cache:
+            cached_paper = cache.get_cached(pdf)
+            if cached_paper:
+                papers.append(cached_paper)
+                cached_count += 1
+                continue
+
         try:
             paper = extract_paper_from_pdf(pdf, max_pages=max_pages)
+            # Compute hash for later caching
+            pdf_hashes[pdf.name] = compute_pdf_hash(pdf)
         except Exception as e:
             failures += 1
             _report_error("extract", pdf, e)
@@ -77,24 +100,47 @@ def load_papers(papers_dir: Path, max_pages: int | None = None) -> list[Paper]:
             )
         papers.append(paper)
 
+    if cached_count:
+        tqdm.write(f"[INFO] Using cached summaries for {cached_count} unchanged papers")
     if failures:
         tqdm.write(f"[WARN] Extraction failures: {failures}/{len(pdfs)} PDFs")
 
-    return papers
+    return papers, pdf_hashes
 
 
-def generate_summaries(papers: list[Paper]) -> list[Paper]:
+def generate_summaries(
+    papers: list[Paper],
+    cache: PaperCache | None = None,
+    pdf_hashes: dict[str, str] | None = None
+) -> list[Paper]:
     """Generate summaries for all papers (LLM or heuristic)."""
     summarized: list[Paper] = []
     failures = 0
+    new_summaries = 0
 
     for paper in tqdm(papers, desc="Summarizing"):
+        # Skip if already has summary (from cache)
+        if paper.summary_md:
+            summarized.append(paper)
+            continue
+
         try:
-            summarized.append(summarize_paper(paper))
+            result = summarize_paper(paper)
+            summarized.append(result)
+            new_summaries += 1
+
+            # Store in cache
+            if cache and result.summary_md:
+                pdf_hash = pdf_hashes.get(paper.pdf_path.name) if pdf_hashes else None
+                cache.store(result, pdf_hash)
         except Exception as e:
             failures += 1
             _report_error("summarize", paper.pdf_path, e)
             summarized.append(paper)
+
+    if new_summaries and cache:
+        cache.save()
+        tqdm.write(f"[INFO] Generated {new_summaries} new summaries (cached)")
 
     if failures:
         tqdm.write(f"[WARN] Summarization failures: {failures}/{len(papers)} PDFs")
@@ -106,35 +152,22 @@ def build_markdown(papers: list[Paper]) -> str:
     """Build final markdown document from papers."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines: list[str] = []
-    lines.append("# Papers summary (auto-generated)")
+    
+    lines.append("# Papers Summary")
     lines.append("")
     lines.append(f"_Generated: {now}_")
     lines.append("")
-    lines.append("This file summarizes the PDFs in `papers/` for use as context in this codebase.")
-    lines.append("")
-    lines.append("## DealSeek: current personalization context")
-    lines.append(
-        "_Source: `docs/PERSONALIZATION_PLAN.md` (summary of what the codebase currently implements)._"
-    )
-    lines.append("")
-    lines.append("- **High-level flow**: `/deals?userId=...` runs **regular trending feed** and **personalized candidate fetch** in parallel, then blends/interleaves results (target: **1 personalized : 2 regular**).")
-    lines.append("- **User preference representation**: time-weighted centroids per **(user, category)** stored in Milvus (`user_preferences`).")
-    lines.append("- **Candidate retrieval**: Milvus vector search using top categories + deal embeddings from Milvus (`deals`), followed by SQL fetch of details with **quality gating** pushed down (e.g. `deal_score >= 25`).")
-    lines.append("- **Diversity**: multi-centroid blending (top 3 categories) uses softmax allocation + a floor to avoid single-category domination.")
-    lines.append("- **Latency**: parallelized via `errgroup`, plus **RAM preference cache** (`TTLCache`, 1h TTL) to avoid repeated Milvus calls.")
-    lines.append("- **Fallbacks**: no `userId`, no prefs, Milvus failure, or all personalized candidates gated → standard ranking/trending only.")
-    lines.append("- **Key implementation files**: `backend/go/internal/handlers/deals.go`, `backend/go/internal/service/personalization.go`, `backend/go/internal/milvus/preferences.go`, `backend/go/internal/service/deals_service.go`.")
-    lines.append("")
-    lines.append("## How to use this")
-    lines.append("- Use each paper's **Practical takeaways for DealSeek** section for prompting/feature ideation.")
-    lines.append("- If you set `OPENAI_API_KEY`, re-run the generator to get deeper method + results summaries.")
-    lines.append("")
+
+    # Index
     lines.append("## Index")
+    lines.append("")
     for p in papers:
         anchor = re.sub(r"[^a-z0-9]+", "-", p.title.lower()).strip("-")
         lines.append(f"- [{p.title}](#{anchor})")
     lines.append("")
-    lines.append("## Summaries")
+
+    # Summaries
+    lines.append("---")
     lines.append("")
     for p in papers:
         lines.append(f"## {p.title}")
@@ -163,6 +196,16 @@ def main() -> int:
         help="Output markdown path (default: output/PAPERS_SUMMARY.md)",
     )
     ap.add_argument("--max-pages", type=int, default=0, help="Limit pages per PDF (0 = all pages)")
+    ap.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable caching, re-summarize all papers"
+    )
+    ap.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear cache before running"
+    )
     args = ap.parse_args()
 
     papers_dir = Path(args.papers_dir)
@@ -172,9 +215,16 @@ def main() -> int:
     if not papers_dir.exists():
         raise SystemExit(f"papers dir not found: {papers_dir}")
 
-    # Simple pipeline: load → summarize → write
-    papers = load_papers(papers_dir, max_pages=max_pages)
-    papers = generate_summaries(papers)
+    # Initialize cache (unless disabled)
+    cache = None if args.no_cache else PaperCache()
+    if cache and args.clear_cache:
+        cache.clear()
+        cache.save()
+        print("[INFO] Cache cleared")
+
+    # Pipeline: load → summarize → write
+    papers, pdf_hashes = load_papers(papers_dir, max_pages=max_pages, cache=cache)
+    papers = generate_summaries(papers, cache=cache, pdf_hashes=pdf_hashes)
 
     md = build_markdown(papers)
     out_path.parent.mkdir(parents=True, exist_ok=True)

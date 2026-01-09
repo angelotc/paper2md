@@ -8,7 +8,8 @@ Automatically generate structured markdown summaries of academic PDFs for use as
 - **LLM-based summarization**: OpenAI-compatible API with map-reduce strategy for high-quality summaries
 - **Multiple LLM providers**: Supports OpenAI, OpenRouter, Gemini, or any OpenAI-compatible endpoint
 - **Structured output**: TL;DR, Problem, Approach, Results, Practical Takeaways, Limitations
-- **Domain-specific**: Includes DealSeek-specific takeaways for deals/product recommendations
+- **Incremental processing**: Caches summaries, only re-processes changed PDFs
+- **Customizable prompts**: Configure via `prompts.json`
 
 ## Installation
 
@@ -40,12 +41,12 @@ cp .env.local .env
 
 ### prompts.json
 
-You can customize the summarization prompts and chunking logic by creating a `prompts.json` file in the root directory.
+Customize summarization prompts and chunking via `prompts.json`:
 
 ```json
 {
-  "chunk_prompt": "Summarize this chunk: {chunk}",
-  "reduce_prompt": "Combine these summaries: {summaries}",
+  "chunk_prompt": "...",
+  "reduce_prompt": "...",
   "chunk_max_chars": 12000,
   "max_chunks": 8
 }
@@ -56,8 +57,6 @@ You can customize the summarization prompts and chunking logic by creating a `pr
 - `reduce_prompt`: Template for the final combination step. Placeholders: `{title}`, `{summaries}`.
 - `chunk_max_chars`: Maximum characters per text chunk (default: `12000`).
 - `max_chunks`: Maximum number of chunks to process per paper (default: `8`).
-
-*Note: Environment variables take precedence over `prompts.json` values.*
 
 ## Usage
 
@@ -70,6 +69,12 @@ OPENAI_API_KEY=sk-... python summarize_papers.py
 
 # Custom options
 python summarize_papers.py --papers-dir papers --out output/PAPERS_SUMMARY.md --max-pages 10
+
+# Force re-summarize all papers (ignore cache)
+python summarize_papers.py --no-cache
+
+# Clear cache and re-run
+python summarize_papers.py --clear-cache
 ```
 
 ### Command-line options
@@ -77,6 +82,8 @@ python summarize_papers.py --papers-dir papers --out output/PAPERS_SUMMARY.md --
 - `--papers-dir DIR` - Directory containing PDFs (default: `papers`)
 - `--out FILE` - Output markdown path (default: `output/PAPERS_SUMMARY.md`)
 - `--max-pages N` - Limit pages per PDF, 0 = all pages (default: 0)
+- `--no-cache` - Disable caching, re-summarize all papers
+- `--clear-cache` - Clear cache before running
 
 ## Process Flow
 
@@ -118,7 +125,7 @@ graph TD
 **Key stages:**
 1. **PDF → Paper** - Title extraction cascade + text extraction with fallback strategies
 2. **Paper → Summarized Paper** - Map-reduce LLM summarization (chunk → summarize → combine)
-3. **Papers → Markdown** - Build structured output with index and DealSeek context
+3. **Papers → Markdown** - Build structured output with index and summaries
 
 ## Architecture
 
@@ -128,6 +135,7 @@ The codebase follows a **deep modules** design pattern with strict separation of
 - `lib/text_clean.py` - Pure text transformation functions
 - `lib/content_analysis.py` - Pure analysis functions (abstract, DOI, contributions)
 - `lib/summarization.py` - LLM-based summarization (OpenAI)
+- `lib/cache.py` - Incremental processing with hash-based caching
 - `lib/models.py` - Immutable dataclasses (Paper, ExtractedContent)
 - `summarize_papers.py` - Thin orchestration layer
 
@@ -146,13 +154,12 @@ TITLE_OVERRIDES: dict[str, str] = {
 Generated markdown includes:
 
 - Index of all papers with anchor links
-- DealSeek personalization context section
 - Per-paper summaries with:
   - TL;DR (3 bullets)
   - Problem statement
   - Approach/methodology
   - Results with metrics
-  - Practical takeaways for DealSeek
+  - Practical takeaways
   - Limitations and open questions
   - DOI link (if available)
 
