@@ -131,8 +131,6 @@ The codebase follows a **deep modules** design pattern with strict separation of
 - `lib/models.py` - Immutable dataclasses (Paper, ExtractedContent)
 - `summarize_papers.py` - Thin orchestration layer
 
-See [CLAUDE.md](CLAUDE.md) for detailed architecture documentation.
-
 ## Adding PDFs with Missing Metadata
 
 If a PDF's title metadata is corrupt or missing, add an override to `lib/pdf_extract.py`:
