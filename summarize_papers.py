@@ -4,19 +4,21 @@ Summarize PDFs in /papers into a single markdown file for repo context.
 
 Behavior:
 - Extracts text + title from each PDF via sophisticated metadata + text extraction.
-- Generates structured summaries using OpenAI-compatible LLM (required).
-- Caches summaries in .paper2md/ to skip unchanged papers.
+- Generates structured summaries using LLM (OpenAI API or local model).
+- Caches extracted text in .paper2md/ to skip re-extraction of unchanged PDFs.
 
 Usage (PowerShell):
   python summarize_papers.py [--papers-dir papers] [--out output/PAPERS_SUMMARY.md]
   python summarize_papers.py --no-cache  # Force re-summarize all papers
+  python summarize_papers.py --local     # Use local LLM (LiquidAI LFM2.5-1.2B)
 
-Required env vars:
+Required env vars (for API mode):
   OPENAI_API_KEY          -> API key for LLM provider
 
 Optional env vars:
   OPENAI_MODEL            -> default: gpt-5-mini-2025-08-07
   OPENAI_BASE_URL         -> API base URL (e.g. OpenRouter, Gemini)
+  LOCAL_MODEL             -> HuggingFace model ID for --local (default: LiquidAI/LFM2.5-1.2B-Instruct)
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from tqdm import tqdm
 
 from lib.models import Paper
 from lib.pdf_extract import extract_paper_from_pdf
-from lib.summarization import summarize_paper
+from lib.summarization import summarize_paper, enable_local_llm, is_using_local_llm
 from lib.content_analysis import extract_structured_content
 from lib.cache import PaperCache, compute_pdf_hash
 
@@ -63,17 +65,18 @@ def load_papers(
     papers_dir: Path,
     max_pages: int | None = None,
     cache: PaperCache | None = None
-) -> tuple[list[Paper], dict[str, str]]:
+) -> list[Paper]:
     """
     Extract title + text from all PDFs in directory.
+    Uses cache to avoid re-extracting unchanged PDFs.
     
-    Returns: (papers, pdf_hashes) where pdf_hashes maps filename to hash
+    Returns: list of Paper objects with text extracted
     """
     pdfs = sorted(papers_dir.glob("*.pdf"))
     papers: list[Paper] = []
-    pdf_hashes: dict[str, str] = {}
     failures = 0
     cached_count = 0
+    new_extractions = 0
 
     for pdf in tqdm(pdfs, desc="Extracting PDFs"):
         # Check cache first
@@ -86,8 +89,13 @@ def load_papers(
 
         try:
             paper = extract_paper_from_pdf(pdf, max_pages=max_pages)
-            # Compute hash for later caching
-            pdf_hashes[pdf.name] = compute_pdf_hash(pdf)
+            
+            # Store extracted text in cache
+            if cache:
+                pdf_hash = compute_pdf_hash(pdf)
+                cache.store(paper, pdf_hash)
+                new_extractions += 1
+                
         except Exception as e:
             failures += 1
             _report_error("extract", pdf, e)
@@ -100,47 +108,37 @@ def load_papers(
             )
         papers.append(paper)
 
+    # Save cache if we extracted new papers
+    if cache and new_extractions:
+        cache.save()
+        tqdm.write(f"[INFO] Cached text for {new_extractions} newly extracted papers")
+    
     if cached_count:
-        tqdm.write(f"[INFO] Using cached summaries for {cached_count} unchanged papers")
+        tqdm.write(f"[INFO] Using cached text for {cached_count} unchanged papers")
     if failures:
         tqdm.write(f"[WARN] Extraction failures: {failures}/{len(pdfs)} PDFs")
 
-    return papers, pdf_hashes
+    return papers
 
 
-def generate_summaries(
-    papers: list[Paper],
-    cache: PaperCache | None = None,
-    pdf_hashes: dict[str, str] | None = None
-) -> list[Paper]:
-    """Generate summaries for all papers (LLM or heuristic)."""
+def generate_summaries(papers: list[Paper]) -> list[Paper]:
+    """Generate summaries for all papers using LLM."""
     summarized: list[Paper] = []
     failures = 0
-    new_summaries = 0
 
     for paper in tqdm(papers, desc="Summarizing"):
-        # Skip if already has summary (from cache)
-        if paper.summary_md:
+        # Skip papers with no text (nothing to summarize)
+        if not paper.text:
             summarized.append(paper)
             continue
 
         try:
             result = summarize_paper(paper)
             summarized.append(result)
-            new_summaries += 1
-
-            # Store in cache
-            if cache and result.summary_md:
-                pdf_hash = pdf_hashes.get(paper.pdf_path.name) if pdf_hashes else None
-                cache.store(result, pdf_hash)
         except Exception as e:
             failures += 1
             _report_error("summarize", paper.pdf_path, e)
             summarized.append(paper)
-
-    if new_summaries and cache:
-        cache.save()
-        tqdm.write(f"[INFO] Generated {new_summaries} new summaries (cached)")
 
     if failures:
         tqdm.write(f"[WARN] Summarization failures: {failures}/{len(papers)} PDFs")
@@ -199,12 +197,23 @@ def main() -> int:
     ap.add_argument(
         "--no-cache",
         action="store_true",
-        help="Disable caching, re-summarize all papers"
+        help="Disable caching, re-extract text from all PDFs"
     )
     ap.add_argument(
         "--clear-cache",
         action="store_true",
         help="Clear cache before running"
+    )
+    ap.add_argument(
+        "--local",
+        action="store_true",
+        help="Use local LLM (LiquidAI LFM2.5-1.2B-Instruct) instead of OpenAI API"
+    )
+    ap.add_argument(
+        "--local-model",
+        type=str,
+        default=None,
+        help="HuggingFace model ID for local inference (default: LiquidAI/LFM2.5-1.2B-Instruct)"
     )
     args = ap.parse_args()
 
@@ -222,9 +231,21 @@ def main() -> int:
         cache.save()
         print("[INFO] Cache cleared")
 
+    # Enable local LLM if requested
+    if args.local:
+        try:
+            enable_local_llm(model_id=args.local_model)
+            print(f"[INFO] Using local LLM mode")
+        except ImportError as e:
+            raise SystemExit(
+                f"Local LLM requires additional dependencies.\n"
+                f"Run: pip install transformers torch\n"
+                f"Error: {e}"
+            )
+
     # Pipeline: load → summarize → write
-    papers, pdf_hashes = load_papers(papers_dir, max_pages=max_pages, cache=cache)
-    papers = generate_summaries(papers, cache=cache, pdf_hashes=pdf_hashes)
+    papers = load_papers(papers_dir, max_pages=max_pages, cache=cache)
+    papers = generate_summaries(papers)
 
     md = build_markdown(papers)
     out_path.parent.mkdir(parents=True, exist_ok=True)

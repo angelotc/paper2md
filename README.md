@@ -6,9 +6,10 @@ Automatically generate structured markdown summaries of academic PDFs for use as
 
 - **Sophisticated title extraction**: PDF metadata (/Title, XMP) → first-page text heuristics → filename fallback
 - **LLM-based summarization**: OpenAI-compatible API with map-reduce strategy for high-quality summaries
+- **Local LLM support**: Run completely offline using LiquidAI LFM2.5-1.2B-Instruct (no API key needed)
 - **Multiple LLM providers**: Supports OpenAI, OpenRouter, Gemini, or any OpenAI-compatible endpoint
 - **Structured output**: TL;DR, Problem, Approach, Results, Practical Takeaways, Limitations
-- **Incremental processing**: Caches summaries, only re-processes changed PDFs
+- **Incremental processing**: Caches extracted text, only re-extracts changed PDFs
 - **Customizable prompts**: Configure via `prompts.json`
 
 ## Installation
@@ -35,9 +36,13 @@ cp .env.local .env
 
 ### Environment variables
 
+**For API mode (default):**
 - `OPENAI_API_KEY` - **Required** for LLM summarization
 - `OPENAI_MODEL` - Model to use (default: `gpt-5-mini-2025-08-07`)
 - `OPENAI_BASE_URL` - API base URL (optional, for OpenRouter, Gemini, etc.)
+
+**For local mode (`--local`):**
+- `LOCAL_MODEL` - HuggingFace model ID (default: `LiquidAI/LFM2.5-1.2B-Instruct`)
 
 ### prompts.json
 
@@ -67,6 +72,12 @@ python summarize_papers.py
 # Or set API key inline
 OPENAI_API_KEY=sk-... python summarize_papers.py
 
+# Local LLM mode (no API key needed, runs on your machine)
+python summarize_papers.py --local
+
+# Local with custom model
+python summarize_papers.py --local --local-model "LiquidAI/LFM2.5-1.2B-Instruct"
+
 # Custom options
 python summarize_papers.py --papers-dir papers --out output/PAPERS_SUMMARY.md --max-pages 10
 
@@ -82,8 +93,10 @@ python summarize_papers.py --clear-cache
 - `--papers-dir DIR` - Directory containing PDFs (default: `papers`)
 - `--out FILE` - Output markdown path (default: `output/PAPERS_SUMMARY.md`)
 - `--max-pages N` - Limit pages per PDF, 0 = all pages (default: 0)
-- `--no-cache` - Disable caching, re-summarize all papers
+- `--no-cache` - Disable caching, re-extract text from all PDFs
 - `--clear-cache` - Clear cache before running
+- `--local` - Use local LLM instead of OpenAI API
+- `--local-model MODEL` - HuggingFace model ID for local inference
 
 ## Process Flow
 
@@ -111,8 +124,8 @@ graph TD
     subgraph "2. Summarization"
         K --> L[Load Config<br/>prompts.json]
         L --> M[Chunk Text]
-        M --> N[Map: Summarize Chunks<br/>OpenAI API]
-        N --> O[Reduce: Combine<br/>OpenAI API]
+        M --> N[Map: Summarize Chunks<br/>OpenAI API or Local LLM]
+        N --> O[Reduce: Combine<br/>OpenAI API or Local LLM]
     end
 
     O --> P[Final Summary]
@@ -134,7 +147,8 @@ The codebase follows a **deep modules** design pattern with strict separation of
 - `lib/pdf_extract.py` - Deep module hiding all PDF parsing complexity
 - `lib/text_clean.py` - Pure text transformation functions
 - `lib/content_analysis.py` - Pure analysis functions (abstract, DOI, contributions)
-- `lib/summarization.py` - LLM-based summarization (OpenAI)
+- `lib/summarization.py` - LLM-based summarization (OpenAI or local)
+- `lib/local_llm.py` - Local LLM inference using LiquidAI LFM2.5
 - `lib/cache.py` - Incremental processing with hash-based caching
 - `lib/models.py` - Immutable dataclasses (Paper, ExtractedContent)
 - `summarize_papers.py` - Thin orchestration layer
@@ -165,10 +179,21 @@ Generated markdown includes:
 
 ## Dependencies
 
+**Core:**
 - `pdfminer.six` - PDF text extraction (preferred for two-column layouts)
 - `python-dotenv` - Environment variable loading
 - `tqdm` - Progress bars
-- `openai` - **Required** for LLM-based summarization
+- `openai` - For OpenAI API-based summarization
+
+**For local LLM (`--local` flag):**
+```bash
+pip install transformers torch
+```
+
+The local mode uses [LiquidAI LFM2.5-1.2B-Instruct](https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct), a 1.2B parameter hybrid model optimized for edge deployment:
+- ~1GB memory footprint
+- Runs on CPU, CUDA, or Apple Silicon (MPS)
+- First run downloads the model (~2.5GB)
 
 ## License
 

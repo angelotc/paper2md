@@ -2,3 +2,14 @@ pdfminer.six>=20221105
 python-dotenv>=1.0.0
 tqdm>=4.65.0
 openai>=1.0.0
+
+# Local LLM support (for --local flag)
+transformers>=4.40.0
+
+# PyTorch with CUDA 12.1 support
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+accelerate == 1.12.0
+psutil==7.2.1
