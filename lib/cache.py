@@ -26,19 +26,24 @@ def compute_pdf_hash(pdf_path: Path) -> str:
 
 class PaperCache:
     """
-    Cache for paper summaries keyed by PDF content hash.
+    Cache for extracted PDF text keyed by PDF content hash.
     
     Schema:
     {
-        "version": 1,
+        "version": 2,
         "papers": {
             "filename.pdf": {
                 "hash": "sha256...",
                 "title": "Paper Title",
-                "summary_md": "### TL;DR..."
+                "text": "Full extracted text..."
             }
         }
     }
+    
+    Note: We cache text (not summaries) because:
+    - Text extraction is deterministic
+    - Summaries depend on LLM/prompts (would be stale when switching modes)
+    - Text extraction requires pdfminer which may not always be available
     """
 
     def __init__(self, cache_path: Path | str = DEFAULT_CACHE_FILE):
@@ -50,11 +55,12 @@ class PaperCache:
         if self.cache_path.exists():
             try:
                 data = json.loads(self.cache_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict) and data.get("version") == 1:
+                if isinstance(data, dict) and data.get("version") == 2:
                     return data
+                # Invalidate old cache versions (v1 stored summaries, v2 stores text)
             except (json.JSONDecodeError, OSError):
                 pass
-        return {"version": 1, "papers": {}}
+        return {"version": 2, "papers": {}}
 
     def save(self) -> None:
         """Persist cache to disk."""
@@ -71,7 +77,7 @@ class PaperCache:
         Checks if:
         1. Entry exists for this filename
         2. Stored hash matches current file hash
-        3. Summary exists
+        3. Text exists
         """
         entry = self._data["papers"].get(pdf_path.name)
         if not entry:
@@ -81,35 +87,32 @@ class PaperCache:
         if entry.get("hash") != current_hash:
             return None
 
-        summary = entry.get("summary_md")
-        if not summary:
+        text = entry.get("text")
+        if text is None:  # Allow empty string (some PDFs have no extractable text)
             return None
 
         return Paper(
             pdf_path=pdf_path,
             title=entry.get("title", pdf_path.stem),
-            text="",  # Don't cache full text - re-extract if needed
-            summary_md=summary
+            text=text,
+            summary_md=None  # Always regenerate summaries
         )
 
     def store(self, paper: Paper, pdf_hash: str | None = None) -> None:
         """
-        Store paper summary in cache.
+        Store extracted paper text in cache.
         
         Args:
-            paper: Paper with summary_md populated
+            paper: Paper with text extracted
             pdf_hash: Pre-computed hash (to avoid re-hashing)
         """
-        if not paper.summary_md:
-            return
-
         if pdf_hash is None:
             pdf_hash = compute_pdf_hash(paper.pdf_path)
 
         self._data["papers"][paper.pdf_path.name] = {
             "hash": pdf_hash,
             "title": paper.title,
-            "summary_md": paper.summary_md
+            "text": paper.text
         }
 
     def is_changed(self, pdf_path: Path) -> tuple[bool, str]:
@@ -134,8 +137,8 @@ class PaperCache:
         """Return cache statistics."""
         return {
             "total_entries": len(self._data["papers"]),
-            "with_summaries": sum(
+            "with_text": sum(
                 1 for e in self._data["papers"].values()
-                if e.get("summary_md")
+                if e.get("text") is not None
             )
         }
