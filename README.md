@@ -8,7 +8,7 @@ Automatically generate structured markdown summaries of academic PDFs for use as
 - **LLM-based summarization**: OpenAI-compatible API with map-reduce strategy for high-quality summaries
 - **Multiple LLM providers**: Supports OpenAI, OpenRouter, Gemini, or any OpenAI-compatible endpoint
 - **Structured output**: TL;DR, Problem, Approach, Results, Practical Takeaways, Limitations
-- **Incremental processing**: Caches summaries, only re-processes changed PDFs
+- **Incremental processing**: Caches extracted text, skips re-extraction for unchanged PDFs
 - **Customizable prompts**: Configure via `prompts.json`
 
 ## Installation
@@ -82,7 +82,7 @@ python summarize_papers.py --clear-cache
 - `--papers-dir DIR` - Directory containing PDFs (default: `papers`)
 - `--out FILE` - Output markdown path (default: `output/PAPERS_SUMMARY.md`)
 - `--max-pages N` - Limit pages per PDF, 0 = all pages (default: 0)
-- `--no-cache` - Disable caching, re-summarize all papers
+- `--no-cache` - Disable caching, re-extract text from all PDFs
 - `--clear-cache` - Clear cache before running
 
 ## Process Flow
@@ -135,7 +135,7 @@ The codebase follows a **deep modules** design pattern with strict separation of
 - `lib/text_clean.py` - Pure text transformation functions
 - `lib/content_analysis.py` - Pure analysis functions (abstract, DOI, contributions)
 - `lib/summarization.py` - LLM-based summarization (OpenAI)
-- `lib/cache.py` - Incremental processing with hash-based caching
+- `lib/cache.py` - Caches extracted text (not summaries) for incremental processing
 - `lib/models.py` - Immutable dataclasses (Paper, ExtractedContent)
 - `summarize_papers.py` - Thin orchestration layer
 
